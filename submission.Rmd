@@ -1,0 +1,190 @@
+---
+title: "Practical Machine Learning Project"
+author: "William Yee"
+date: "12/19/2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset)
+
+##Data
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+
+##Packages Used
+Here we load some of the packages I expect to be used.
+
+```{r warning=FALSE, message=FALSE}
+library(tidyverse)
+library(rattle)
+library(caret)
+library(rpart)
+library(randomForest)
+```
+
+##Getting and Cleaning Data
+
+Now we will download some the data into local directory.
+
+```{r eval=FALSE}
+raining.url<- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testing.url<- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+download.file(url = training.url, destfile = "pml-training.csv")
+download.file(url = testing.url, destfile = "pml-testing.csv")
+```
+
+Here we will read the data into R. Let's not confuse the veribage.  
+The "training" CSV file will the data used to train and test the model.  
+The "testing" CSV file contains 20 observations we will use to answer the Coursera Quiz.  
+The "training" CSV will be referenced as all.data; the "testing" CSV will be referenced as quiz.
+```{r warning=FALSE, message=FALSE}
+all.data<-read_csv(file = "pml-training.csv")
+quiz<-read_csv(file = "pml-testing.csv")
+```
+
+Missing values will become an issue for when it comes time to run the prediction models.  Let's see if the variables are missing a significant portion of their values. If they do we can remove the variables all together. If not, we will decide if it's prudent to estimate the values or remove the observations. I jumped ahead and decided 60% missing is significant.
+```{r}
+per.na<- vector(mode="numeric", length= ncol(all.data))
+keep.me<- vector(mode="numeric", length= 0)
+count.na<- vector(mode="numeric", length= ncol(all.data))
+for(i in seq_along(all.data)){
+        per.na[i]<-mean(is.na(all.data[,i]))
+        count.na[i]<-sum(is.na(all.data[,i]))
+        if(per.na[i]<=.60){keep.me<-c(keep.me, i)}
+
+}
+
+table(per.na)
+```
+The missing values are heavily bound to the variables. This likely occuers from the use of different data collection devices as describe in the background.   Now we will run this same process for the quiz set.
+
+```{r}
+qper.na<- vector(mode="numeric", length= ncol(quiz))
+qkeep.me<- vector(mode="numeric", length= 0)
+qcount.na<- vector(mode="numeric", length= ncol(quiz))
+for(i in seq_along(quiz)){
+        qper.na[i]<-mean(is.na(quiz[,i]))
+        qcount.na[i]<-sum(is.na(quiz[,i]))
+        if(qper.na[i]<=.60){qkeep.me<-c(qkeep.me, i)}
+        
+}
+table(qper.na)
+```
+
+The following set will compare the remaining variables. This step is important to insure the training, testing, and quiz sets will have the same variables moving forward.
+
+```{r}
+table(keep.me %in% qkeep.me)
+```
+
+Let's remove the variables(columns) we don't need.
+```{r}
+all.data<-select(all.data,c(keep.me))
+all.data<-select(all.data, -1)
+quiz<-select(quiz,c(keep.me))
+quiz<-select(quiz, -1)
+```
+
+There is one observation with 3 missing values. It is one observation of 19,622, let's remove it.
+```{r}
+all.data<-filter(all.data,complete.cases(all.data))
+```
+
+
+##Splitting the Data into Training and Testing Sets
+```{r}
+set.seed(1652)
+inTrain<- createDataPartition(y=all.data$classe, p =0.75, list= F)
+training<- all.data[inTrain,]
+testing<- all.data[-inTrain,]
+```
+
+##Prediction Tree
+
+This prediction tree was done with the rpart's default settings.
+```{r cache=TRUE}
+model.tree<-rpart(classe~., data=training)
+fancyRpartPlot(model.tree)
+predict.tree<-predict(model.tree,testing,type="class")
+cm.tree<-confusionMatrix(predict.tree, testing$classe)
+cm.tree
+```
+
+This prediction tree was done with the caret package's default settings.
+```{r cache=TRUE}
+model.tree2<-train(classe~., data=training, method="rpart")
+predict.tree2<-predict(model.tree2,testing)
+cm.tree2<-confusionMatrix(predict.tree2,testing$classe)
+cm.tree2$overall[1]
+```
+
+The rpart package gave an accuracy of 86.84% while caret's implementation of rpart gave and accuracy of 46.01%. Let's take a look at the model information to determine the difference in parameters.
+
+Rpart
+```{r}
+model.tree$control$cp
+```
+
+Caret
+```{r eval=FALSE}
+model.tree2$modelInfo$parameters
+model.tree2$modelInfo$grid
+model.tree2$modelInfo$loop
+```
+
+Rpart package's default sets the Complexity Parameter to a very small value. While the Caret Package's default determines the Complexity Parameter via the grid and loop functions. I am positive this is a gross oversimplification, but let's move on anyways.
+
+###Prediction Tree Out of Sample Error
+```{r}
+1-cm.tree$overall[[1]]
+```
+
+
+##Random Forest
+```{r warning=FALSE, message=FALSE, cache=TRUE}
+model.rf<-train(classe~., data= training, method="rf")
+predict.rf<-predict(model.rf,testing)
+cm.rf<-confusionMatrix(predict.rf,testing$classe)
+cm.rf
+```
+###Random Forest Out of Sample Error
+```{r}
+1-cm.rf$overall[[1]]
+```
+
+
+##Boosting Model
+```{r warning=FALSE, message=FALSE, cache=TRUE}
+model.gbm<-train(classe~., data= training, method="gbm", verbose=FALSE)
+predict.gbm<-predict(model.gbm,testing)
+cm.gbm<-confusionMatrix(predict.gbm,testing$classe)
+cm.gbm
+```
+
+###Boosting Model Out of Sample Error
+```{r}
+1-cm.gbm$overall[[1]]
+```
+
+
+##Predicition
+
+Let's use the 99.98% accurate, Random Forest, Model to predicit the quiz results
+```{r}
+predict(model.rf,quiz)
+```
+
